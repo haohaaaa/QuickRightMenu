@@ -7,3 +7,5 @@ DerivedData/
 *.swp
 *.tmp
 node_modules/
+.build/
+.swiftpm/

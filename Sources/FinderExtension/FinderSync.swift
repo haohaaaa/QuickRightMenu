@@ -1,67 +1,6 @@
 import Cocoa
 import FinderSync
-
-// MARK: - Central Storage Configuration
-
-struct CentralStorage {
-    static var userHomeDirectory: String {
-        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
-            return String(cString: dir)
-        }
-        return NSHomeDirectory()
-    }
-    
-    /// Path inside this sandboxed extension's container: ~/Library/Application Support/QuickRightMenu/
-    static var containerAppSupportURL: URL {
-        return URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/QuickRightMenu", isDirectory: true)
-    }
-    
-    static var rootURL: URL {
-        // 1. Direct user home path: ~/.quickrightmenu
-        let directURL = URL(fileURLWithPath: userHomeDirectory).appendingPathComponent(".quickrightmenu", isDirectory: true)
-        if FileManager.default.fileExists(atPath: directURL.path) {
-            return directURL
-        }
-        // 2. Symlink inside extension container: ~/Library/Containers/.../Data/.quickrightmenu
-        let containerHome = NSHomeDirectory()
-        let containerLink = URL(fileURLWithPath: containerHome).appendingPathComponent(".quickrightmenu", isDirectory: true)
-        if FileManager.default.fileExists(atPath: containerLink.path) {
-            return containerLink
-        }
-        return directURL
-    }
-    
-    static var configFileURL: URL {
-        let containerConfig = containerAppSupportURL.appendingPathComponent("config.json", isDirectory: false)
-        if FileManager.default.fileExists(atPath: containerConfig.path) {
-            return containerConfig
-        }
-        return rootURL.appendingPathComponent("config.json", isDirectory: false)
-    }
-    
-    static var commandsDirectoryURL: URL {
-        return rootURL.appendingPathComponent("commands", isDirectory: true)
-    }
-    
-    static var templatesDirectoryURL: URL {
-        let containerTpl = containerAppSupportURL
-            .appendingPathComponent("file_template", isDirectory: true)
-        if FileManager.default.fileExists(atPath: containerTpl.path) {
-            return containerTpl
-        }
-        let directTpl = URL(fileURLWithPath: userHomeDirectory)
-            .appendingPathComponent(".quickrightmenu/file_template", isDirectory: true)
-        if FileManager.default.fileExists(atPath: directTpl.path) {
-            return directTpl
-        }
-        return containerTpl
-    }
-    
-    static var logFileURL: URL {
-        return rootURL.appendingPathComponent("app.log", isDirectory: false)
-    }
-}
+import QuickRightMenuShared
 
 @objc(FinderSync)
 class FinderSync: FIFinderSync {

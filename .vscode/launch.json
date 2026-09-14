@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:QuickRightMenu}",
+            "name": "Debug QuickRightMenu",
+            "target": "QuickRightMenu",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug QuickRightMenu"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:QuickRightMenu}",
+            "name": "Release QuickRightMenu",
+            "target": "QuickRightMenu",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release QuickRightMenu"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:QuickRightMenu}",
+            "name": "Debug QuickRightMenuExtension",
+            "target": "QuickRightMenuExtension",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug QuickRightMenuExtension"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:QuickRightMenu}",
+            "name": "Release QuickRightMenuExtension",
+            "target": "QuickRightMenuExtension",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release QuickRightMenuExtension"
+        }
+    ]
+}

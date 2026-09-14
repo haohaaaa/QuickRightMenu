@@ -1,6 +1,7 @@
 import SwiftUI
 import Cocoa
 import Carbon
+import QuickRightMenuShared
 
 @main
 struct QuickRightMenuApp: App {
@@ -903,137 +904,6 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         // 关闭时清理，下次点击重新创建
         self.window = nil
-    }
-}
-
-// MARK: - Central Storage Configuration
-
-struct CentralStorage {
-    static var userHomeDirectory: String {
-        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
-            return String(cString: dir)
-        }
-        return NSHomeDirectory()
-    }
-    
-    static var rootURL: URL {
-        return URL(fileURLWithPath: userHomeDirectory).appendingPathComponent(".quickrightmenu", isDirectory: true)
-    }
-    
-    static var configFileURL: URL {
-        return rootURL.appendingPathComponent("config.json", isDirectory: false)
-    }
-    
-    static var commandsDirectoryURL: URL {
-        return rootURL.appendingPathComponent("commands", isDirectory: true)
-    }
-    
-    static var templatesDirectoryURL: URL {
-        return rootURL.appendingPathComponent("file_template", isDirectory: true)
-    }
-    
-    static var logFileURL: URL {
-        return rootURL.appendingPathComponent("app.log", isDirectory: false)
-    }
-    
-    static var extensionContainerAppSupportURL: URL {
-        return URL(fileURLWithPath: userHomeDirectory)
-            .appendingPathComponent("Library/Containers/com.liaowenbin.QuickRightMenu.Extension/Data/Library/Application Support/QuickRightMenu", isDirectory: true)
-    }
-    
-    static var extensionContainerTemplatesURL: URL {
-        return extensionContainerAppSupportURL.appendingPathComponent("file_template", isDirectory: true)
-    }
-    
-    static var extensionContainerCommandsURL: URL {
-        return extensionContainerAppSupportURL.appendingPathComponent("commands", isDirectory: true)
-    }
-    
-    static func ensureDirectoriesExist() {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: rootURL, withIntermediateDirectories: true, attributes: nil)
-        try? fm.createDirectory(at: commandsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
-        try? fm.createDirectory(at: templatesDirectoryURL, withIntermediateDirectories: true, attributes: nil)
-        try? fm.createDirectory(at: extensionContainerAppSupportURL, withIntermediateDirectories: true, attributes: nil)
-        try? fm.createDirectory(at: extensionContainerTemplatesURL, withIntermediateDirectories: true, attributes: nil)
-        try? fm.createDirectory(at: extensionContainerCommandsURL, withIntermediateDirectories: true, attributes: nil)
-        
-        let defaultTxtURL = templatesDirectoryURL.appendingPathComponent("纯文本.txt")
-        if !fm.fileExists(atPath: defaultTxtURL.path) {
-            let files = (try? fm.contentsOfDirectory(atPath: templatesDirectoryURL.path)) ?? []
-            if files.filter({ !$0.hasPrefix(".") }).isEmpty {
-                try? "".write(to: defaultTxtURL, atomically: true, encoding: .utf8)
-            }
-        }
-        
-        // Link .quickrightmenu and file_template into extension container
-        let containerDataURL = URL(fileURLWithPath: userHomeDirectory)
-            .appendingPathComponent("Library/Containers/com.liaowenbin.QuickRightMenu.Extension/Data")
-        let linkInContainer = containerDataURL.appendingPathComponent(".quickrightmenu")
-        if fm.fileExists(atPath: containerDataURL.path) && !fm.fileExists(atPath: linkInContainer.path) {
-            try? fm.createSymbolicLink(at: linkInContainer, withDestinationURL: rootURL)
-        }
-        let tplLinkInContainer = containerDataURL.appendingPathComponent("file_template")
-        if fm.fileExists(atPath: containerDataURL.path) && !fm.fileExists(atPath: tplLinkInContainer.path) {
-            try? fm.createSymbolicLink(at: tplLinkInContainer, withDestinationURL: templatesDirectoryURL)
-        }
-        
-        syncTemplatesToContainer()
-    }
-    
-    static func syncTemplatesToContainer() {
-        let fm = FileManager.default
-        let sourceDir = templatesDirectoryURL
-        let targetDir = extensionContainerTemplatesURL
-        
-        try? fm.createDirectory(at: targetDir, withIntermediateDirectories: true, attributes: nil)
-        
-        guard let sourceItems = try? fm.contentsOfDirectory(atPath: sourceDir.path) else { return }
-        let validSources = sourceItems.filter { !$0.hasPrefix(".") }
-        let sourceSet = Set(validSources)
-        
-        let targetItems = (try? fm.contentsOfDirectory(atPath: targetDir.path)) ?? []
-        for targetItem in targetItems {
-            if !targetItem.hasPrefix(".") && !sourceSet.contains(targetItem) {
-                try? fm.removeItem(at: targetDir.appendingPathComponent(targetItem))
-            }
-        }
-        
-        for name in sourceSet {
-            let srcFile = sourceDir.appendingPathComponent(name)
-            let dstFile = targetDir.appendingPathComponent(name)
-            
-            var shouldCopy = true
-            if let srcAttr = try? fm.attributesOfItem(atPath: srcFile.path),
-               let dstAttr = try? fm.attributesOfItem(atPath: dstFile.path),
-               let srcMod = srcAttr[.modificationDate] as? Date,
-               let dstMod = dstAttr[.modificationDate] as? Date,
-               let srcSize = srcAttr[.size] as? NSNumber,
-               let dstSize = dstAttr[.size] as? NSNumber,
-               srcMod == dstMod && srcSize == dstSize {
-                shouldCopy = false
-            }
-            
-            if shouldCopy {
-                try? fm.removeItem(at: dstFile)
-                try? fm.copyItem(at: srcFile, to: dstFile)
-            }
-        }
-    }
-    
-    static func syncToExtensionContainer(configData: Data) {
-        let fm = FileManager.default
-        let containerDir = extensionContainerAppSupportURL
-        try? fm.createDirectory(at: containerDir, withIntermediateDirectories: true, attributes: nil)
-        
-        let targetConfigURL = containerDir.appendingPathComponent("config.json", isDirectory: false)
-        try? configData.write(to: targetConfigURL, options: .atomic)
-    }
-    
-    static func currentTemplateFiles() -> [String] {
-        let fm = FileManager.default
-        let items = (try? fm.contentsOfDirectory(atPath: templatesDirectoryURL.path)) ?? []
-        return items.filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }
 

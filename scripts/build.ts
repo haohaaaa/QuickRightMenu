@@ -35,6 +35,7 @@ export interface BuildOptions {
   forceIcon?: boolean;
   install?: boolean;
   force?: boolean;
+  debug?: boolean;
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -82,7 +83,12 @@ async function computeSourceHash(): Promise<string> {
   const hash = createHash("sha256");
   const sources = await getFilesRecursively(path.join(root, "Sources"));
   const resources = await getFilesRecursively(path.join(root, "Resources"));
-  const allFiles = [...sources, ...resources].sort();
+  const packageSwift = path.join(root, "Package.swift");
+  const allFiles = [...sources, ...resources];
+  if (await pathExists(packageSwift)) {
+    allFiles.push(packageSwift);
+  }
+  allFiles.sort();
 
   for (const file of allFiles) {
     if (file.endsWith(".DS_Store")) continue;
@@ -314,46 +320,35 @@ export async function build(options: BuildOptions = {}): Promise<void> {
     await Promise.all(copyTasks);
     spinner.succeed("Plists and icon assets linked");
 
-    // 5. Query macOS SDK
-    spinner.start("Detecting macOS SDK and build target...");
-    const { stdout: sdkOutput } = await execFileAsync("xcrun", [
-      "--sdk",
-      "macosx",
-      "--show-sdk-path",
-    ]);
-    const sdkPath = sdkOutput.trim();
-    const arch = process.arch === "arm64" ? "arm64" : "x86_64";
-    const target = `${arch}-apple-macos27.0`;
-    spinner.succeed(`SDK configured: ${pc.dim(target)}`);
+    // 5. Compile Swift sources with Swift Package Manager (SPM)
+    const buildConfig = options.debug ? "debug" : "release";
+    spinner.start(
+      `Building targets with Swift Package Manager (${pc.cyan(buildConfig)})...`
+    );
+    await runCommand("swift", ["build", "-c", buildConfig]);
+    spinner.succeed(`SPM build completed (${pc.cyan(buildConfig)})`);
 
-    // 6. Compile Swift sources
-    spinner.start(`Compiling main application (${pc.cyan("QuickRightMenu")})...`);
-    await runCommand("swiftc", [
-      "-sdk",
-      sdkPath,
-      "-target",
-      target,
-      "-O",
-      path.join(root, "Sources", "App", "QuickRightMenuApp.swift"),
-      path.join(root, "Sources", "App", "SettingsView.swift"),
-      "-o",
-      appExecutable,
+    // 6. Locate SPM binaries and assemble into .app and .appex bundles
+    spinner.start("Locating built binaries and assembling bundles...");
+    const { stdout: binPathOutput } = await execFileAsync("swift", [
+      "build",
+      "-c",
+      buildConfig,
+      "--show-bin-path",
     ]);
-    spinner.succeed(`Compiled main application executable`);
+    const spmBinDir = binPathOutput.trim();
+    const spmAppBinary = path.join(spmBinDir, "QuickRightMenu");
+    const spmExtBinary = path.join(spmBinDir, "QuickRightMenuExtension");
 
-    spinner.start(`Compiling Finder extension (${pc.cyan("QuickRightMenu Extension")})...`);
-    await runCommand("swiftc", [
-      "-sdk",
-      sdkPath,
-      "-target",
-      target,
-      "-O",
-      path.join(root, "Sources", "FinderExtension", "main.swift"),
-      path.join(root, "Sources", "FinderExtension", "FinderSync.swift"),
-      "-o",
-      extExecutable,
-    ]);
-    spinner.succeed(`Compiled FinderSync extension executable`);
+    if (!(await pathExists(spmAppBinary)) || !(await pathExists(spmExtBinary))) {
+      throw new Error(`SPM build products missing in ${spmBinDir}`);
+    }
+
+    await fs.copyFile(spmAppBinary, appExecutable);
+    await fs.chmod(appExecutable, 0o755);
+    await fs.copyFile(spmExtBinary, extExecutable);
+    await fs.chmod(extExecutable, 0o755);
+    spinner.succeed("Assembled SPM executables into application and extension bundles");
 
     // PlistBuddy
     spinner.start("Configuring extension principal class...");
@@ -417,6 +412,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
     .option("-f, --force", "Force full rebuild, ignoring build cache")
     .option("-i, --install", "Install to /Applications after successful build")
     .option("-r, --run", "Launch the application after build")
+    .option("--debug", "Build in debug mode instead of release")
     .option("--force-icon", "Force regeneration of icon assets")
     .action(
       async (
@@ -425,6 +421,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
           force?: boolean;
           install?: boolean;
           run?: boolean;
+          debug?: boolean;
           forceIcon?: boolean;
         }
       ) => {
@@ -432,6 +429,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
           force: flags.force,
           install: flags.install,
           runAfterBuild: flags.run,
+          debug: flags.debug,
           forceIcon: flags.forceIcon,
         });
       }

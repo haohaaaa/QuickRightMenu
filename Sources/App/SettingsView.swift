@@ -1,5 +1,6 @@
 import SwiftUI
 import Cocoa
+import QuickRightMenuShared
 
 // MARK: - Premium Color System & UI Modifiers
 
