@@ -11,16 +11,51 @@ struct CentralStorage {
         return NSHomeDirectory()
     }
     
+    /// Path inside this sandboxed extension's container: ~/Library/Application Support/QuickRightMenu/
+    static var containerAppSupportURL: URL {
+        return URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/QuickRightMenu", isDirectory: true)
+    }
+    
     static var rootURL: URL {
-        return URL(fileURLWithPath: userHomeDirectory).appendingPathComponent(".quickrightmenu", isDirectory: true)
+        // 1. Direct user home path: ~/.quickrightmenu
+        let directURL = URL(fileURLWithPath: userHomeDirectory).appendingPathComponent(".quickrightmenu", isDirectory: true)
+        if FileManager.default.fileExists(atPath: directURL.path) {
+            return directURL
+        }
+        // 2. Symlink inside extension container: ~/Library/Containers/.../Data/.quickrightmenu
+        let containerHome = NSHomeDirectory()
+        let containerLink = URL(fileURLWithPath: containerHome).appendingPathComponent(".quickrightmenu", isDirectory: true)
+        if FileManager.default.fileExists(atPath: containerLink.path) {
+            return containerLink
+        }
+        return directURL
     }
     
     static var configFileURL: URL {
+        let containerConfig = containerAppSupportURL.appendingPathComponent("config.json", isDirectory: false)
+        if FileManager.default.fileExists(atPath: containerConfig.path) {
+            return containerConfig
+        }
         return rootURL.appendingPathComponent("config.json", isDirectory: false)
     }
     
     static var commandsDirectoryURL: URL {
         return rootURL.appendingPathComponent("commands", isDirectory: true)
+    }
+    
+    static var templatesDirectoryURL: URL {
+        let containerTpl = containerAppSupportURL
+            .appendingPathComponent("file_template", isDirectory: true)
+        if FileManager.default.fileExists(atPath: containerTpl.path) {
+            return containerTpl
+        }
+        let directTpl = URL(fileURLWithPath: userHomeDirectory)
+            .appendingPathComponent(".quickrightmenu/file_template", isDirectory: true)
+        if FileManager.default.fileExists(atPath: directTpl.path) {
+            return directTpl
+        }
+        return containerTpl
     }
     
     static var logFileURL: URL {
@@ -32,11 +67,14 @@ struct CentralStorage {
 class FinderSync: FIFinderSync {
     
     private let menuTagBase = 42000
+    private let templateTagBase = 43000
+    private var templateTagMap: [Int: String] = [:]
     
     override init() {
         super.init()
         let rootURL = URL(fileURLWithPath: "/")
         FIFinderSyncController.default().directoryURLs = [rootURL]
+        log("Extension initialized, tracking /")
     }
     
     override var toolbarItemName: String {
@@ -51,6 +89,19 @@ class FinderSync: FIFinderSync {
         return menuIconNamed("filemenu.and.selection")
     }
     
+    private func displayTitleFor(filename: String) -> String {
+        let fileURL = URL(fileURLWithPath: filename)
+        let ext = fileURL.pathExtension
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        if ext.isEmpty {
+            return filename
+        } else if baseName.isEmpty || baseName.lowercased() == ext.lowercased() {
+            return ext.uppercased()
+        } else {
+            return "\(baseName) (.\(ext))"
+        }
+    }
+    
     override func menu(for whichMenu: FIMenuKind) -> NSMenu? {
         let menu = NSMenu(title: "QuickRightMenu")
         
@@ -58,27 +109,41 @@ class FinderSync: FIFinderSync {
         createItem.image = menuIconNamed("doc.badge.plus")
         let createMenu = NSMenu(title: "新建文件")
         
-        let settings = settingsDictionary()
-        let customTemplates = (settings["customTemplates"] as? [[String: Any]]) ?? [
-            ["id": "default-txt", "title": "纯文本", "extensionName": "txt", "isEnabled": true]
+        let fileManager = FileManager.default
+        let candidateDirs = [
+            CentralStorage.containerAppSupportURL.appendingPathComponent("file_template", isDirectory: true),
+            URL(fileURLWithPath: CentralStorage.userHomeDirectory).appendingPathComponent(".quickrightmenu/file_template", isDirectory: true),
+            CentralStorage.templatesDirectoryURL,
+            CentralStorage.rootURL.appendingPathComponent("file_template", isDirectory: true)
         ]
         
-        for tpl in customTemplates {
-            guard let isEnabled = tpl["isEnabled"] as? Bool, isEnabled else { continue }
-            guard let ext = tpl["extensionName"] as? String, !ext.isEmpty else { continue }
-            let id = tpl["id"] as? String ?? UUID().uuidString
-            let title = tpl["title"] as? String ?? ""
-            
-            let displayTitle: String
-            if title.isEmpty || title.lowercased() == ext.lowercased() {
-                displayTitle = ext.uppercased()
-            } else {
-                displayTitle = "\(title) (.\(ext))"
+        var templateNames: [String] = []
+        for dir in candidateDirs {
+            if let directItems = try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
+                let names = directItems.map { $0.lastPathComponent }.filter { !$0.hasPrefix(".") }
+                if !names.isEmpty {
+                    templateNames = names
+                    break
+                }
             }
+        }
+        
+        if templateNames.isEmpty {
+            templateNames = ["纯文本.txt"]
+        }
+        templateNames.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+        log("menu(for:) whichMenu=\(whichMenu.rawValue) targetDir=\(targetDirectory().path) templates=\(templateNames)")
+        
+        for (index, filename) in templateNames.enumerated() {
+            let itemTag = templateTagBase + index
+            templateTagMap[itemTag] = filename
+            let displayTitle = displayTitleFor(filename: filename)
             
             let item = NSMenuItem(title: displayTitle, action: #selector(handleMenuItem(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = "create-custom:\(id):\(ext)"
+            item.tag = itemTag
+            item.identifier = NSUserInterfaceItemIdentifier("create-template:\(filename)")
+            item.representedObject = "create-template:\(filename)"
             item.image = menuIconNamed("doc.plaintext")
             createMenu.addItem(item)
         }
@@ -517,15 +582,17 @@ class FinderSync: FIFinderSync {
     }
     
     @objc func handleMenuItem(_ sender: NSMenuItem) {
-        guard let action = actionForMenuItem(sender) else { return }
+        log("handleMenuItem clicked: title='\(sender.title)' parent='\(sender.menu?.title ?? "")' tag=\(sender.tag)")
+        guard let action = actionForMenuItem(sender) else {
+            log("actionForMenuItem returned nil for '\(sender.title)'")
+            return
+        }
         let directory = targetDirectory()
         log("menu title=\(sender.title) parent=\(sender.menu?.title ?? "") action=\(action) directory=\(directory.path) selected=\(selectedPathsString())")
         
-        if action.hasPrefix("create-custom:") {
-            let parts = action.components(separatedBy: ":")
-            let tid = parts.count > 1 ? parts[1] : ""
-            let ext = parts.count > 2 ? parts[2] : "txt"
-            sendCreateCommand(templateId: tid, extension: ext, directory: directory)
+        if action.hasPrefix("create-template:") {
+            let filename = String(action.dropFirst("create-template:".count))
+            sendCreateTemplateCommand(filename: filename, directory: directory)
             return
         }
         
@@ -544,6 +611,12 @@ class FinderSync: FIFinderSync {
     }
     
     private func actionForMenuItem(_ item: NSMenuItem) -> String? {
+        if let templateFile = templateTagMap[item.tag] {
+            return "create-template:\(templateFile)"
+        }
+        if let id = item.identifier?.rawValue, id.hasPrefix("create-template:") {
+            return id
+        }
         if let taggedAction = actionForTag(item.tag) {
             return taggedAction
         }
@@ -553,6 +626,22 @@ class FinderSync: FIFinderSync {
         
         let title = item.title
         let menuTitle = item.menu?.title ?? ""
+        
+        if menuTitle == "新建文件" || item.tag >= templateTagBase {
+            let candidateDirs = [
+                CentralStorage.containerAppSupportURL.appendingPathComponent("file_template", isDirectory: true),
+                URL(fileURLWithPath: CentralStorage.userHomeDirectory).appendingPathComponent(".quickrightmenu/file_template", isDirectory: true)
+            ]
+            for dir in candidateDirs {
+                if let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
+                    for f in files where !f.hasPrefix(".") {
+                        if displayTitleFor(filename: f) == title || title.contains(f) || f.contains(title) {
+                            return "create-template:\(f)"
+                        }
+                    }
+                }
+            }
+        }
         
         if menuTitle == "复制到" || menuTitle == "移动到" {
             let prefix = (menuTitle == "复制到") ? "copy-to" : "move-to"
@@ -679,15 +768,16 @@ class FinderSync: FIFinderSync {
         return URL(fileURLWithPath: CentralStorage.userHomeDirectory)
     }
     
-    private func sendCreateCommand(templateId: String, extension ext: String, directory: URL) {
+    private func sendCreateTemplateCommand(filename: String, directory: URL) {
         var components = URLComponents()
         components.scheme = "quickrightmenu"
         components.host = "create"
         
+        let ext = URL(fileURLWithPath: filename).pathExtension
         var queryItems = [
             URLQueryItem(name: "dir", value: directory.path),
             URLQueryItem(name: "ext", value: ext),
-            URLQueryItem(name: "tid", value: templateId)
+            URLQueryItem(name: "template", value: filename)
         ]
         let paths = selectedPathsString()
         if !paths.isEmpty {
@@ -727,23 +817,27 @@ class FinderSync: FIFinderSync {
     }
     
     private func writeCommandFile(_ urlString: String) {
-        let directoryURL = CentralStorage.commandsDirectoryURL
-        do {
-            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
-        } catch {
-            log("command directory create failed \(error.localizedDescription)")
-            return
-        }
-        
         let filename = String(format: "command-%lld-%u.cmd",
                               Int64(Date().timeIntervalSince1970 * 1000),
                               arc4random_uniform(1000000))
-        let fileURL = directoryURL.appendingPathComponent(filename)
+        let primaryURL = CentralStorage.commandsDirectoryURL.appendingPathComponent(filename)
         do {
-            try urlString.write(to: fileURL, atomically: true, encoding: .utf8)
-            log("write command file \(fileURL.path) \(urlString)")
+            try FileManager.default.createDirectory(at: CentralStorage.commandsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+            try urlString.write(to: primaryURL, atomically: true, encoding: .utf8)
+            log("write command file \(primaryURL.path) \(urlString)")
+            return
         } catch {
-            log("write command file failed \(error.localizedDescription)")
+            log("write primary command file failed: \(error.localizedDescription)")
+        }
+        
+        let fallbackDir = CentralStorage.containerAppSupportURL.appendingPathComponent("commands", isDirectory: true)
+        let fallbackURL = fallbackDir.appendingPathComponent(filename)
+        do {
+            try FileManager.default.createDirectory(at: fallbackDir, withIntermediateDirectories: true, attributes: nil)
+            try urlString.write(to: fallbackURL, atomically: true, encoding: .utf8)
+            log("write fallback command file \(fallbackURL.path) \(urlString)")
+        } catch {
+            log("write fallback command file failed: \(error.localizedDescription)")
         }
     }
     
@@ -755,14 +849,21 @@ class FinderSync: FIFinderSync {
     
     private func log(_ message: String) {
         let line = "\(Date()) Extension: \(message)\n"
-        let fileURL = CentralStorage.logFileURL
+        let targets = [
+            CentralStorage.logFileURL,
+            CentralStorage.containerAppSupportURL.appendingPathComponent("app.log", isDirectory: false)
+        ]
         if let data = line.data(using: .utf8) {
-            if let handle = try? FileHandle(forWritingTo: fileURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            } else {
-                try? data.write(to: fileURL, options: .atomic)
+            for fileURL in targets {
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    if let handle = try? FileHandle(forWritingTo: fileURL) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    }
+                } else {
+                    try? data.write(to: fileURL, options: .atomic)
+                }
             }
         }
     }

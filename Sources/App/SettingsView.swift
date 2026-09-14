@@ -231,7 +231,7 @@ struct SettingsView: View {
         switch sel {
         case "permissions": return "确保权限完整配置，使得右键菜单加载及后台文件操作畅通无阻。"
         case "menu": return "动态配置您想展示的快捷命令，可选择分类开启/关闭。"
-        case "templates": return "定义新建各类型文本文件时的预填入模板内容。"
+        case "templates": return "直接使用 ~/.quickrightmenu/file_template/ 目录下的普通文件作为新建模板，右键菜单实时自动读取。"
         case "favorites": return "添加至多三个快速文件夹，直接呼出“复制到”/“移动到”二级菜单。"
         case "terminal": return "设置“在终端打开”功能触发时，默认调用的终端应用类型。"
         case "login": return "开启后在系统每次登录时自动运行后台轮询守护进程。"
@@ -423,259 +423,238 @@ struct MenuView: View {
     }
 }
 
-// 3. Templates View
+// 3. Templates View (Physical Folder Management)
 struct TemplatesView: View {
-    @ObservedObject var manager = SettingsManager.shared
-    @State private var selectedTemplateId: String? = nil
+    @State private var templateFiles: [URL] = []
+    @State private var selectedFileURL: URL? = nil
+    @State private var showNewFileDialog = false
+    @State private var newFileName = ""
     
-    private var selectedTemplateBinding: Binding<CustomFileTemplate>? {
-        guard let id = selectedTemplateId,
-              let index = manager.customTemplates.firstIndex(where: { $0.id == id }) else {
-            return nil
-        }
-        return Binding<CustomFileTemplate>(
-            get: {
-                if index < manager.customTemplates.count {
-                    return manager.customTemplates[index]
-                }
-                return CustomFileTemplate(title: "", extensionName: "")
-            },
-            set: { updated in
-                var list = manager.customTemplates
-                if index < list.count {
-                    list[index] = updated
-                    manager.customTemplates = list
-                }
-            }
-        )
+    private var templatesDir: URL {
+        return CentralStorage.templatesDirectoryURL
     }
     
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            // Left list of templates
-            VStack(spacing: 0) {
-                HStack {
-                    Text("模板列表")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Text("\(manager.customTemplates.count) 项")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 20) {
+            // Header Action Bar
+            HStack(spacing: 12) {
+                Button(action: openTemplatesDirectoryInFinder) {
+                    Label("在访达中打开模板目录", systemImage: "folder.badge.gearshape")
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .buttonStyle(.borderedProminent)
+                .tint(Color.blue)
+                .help("直接使用系统访达或 VS Code 管理物理模板文件")
                 
-                Divider()
+                Button(action: {
+                    newFileName = "新模板.txt"
+                    showNewFileDialog = true
+                }) {
+                    Label("新建模板文件", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
                 
+                Button(action: reloadTemplates) {
+                    Label("刷新列表", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                
+                Spacer()
+                
+                Text("\(templateFiles.count) 个模板文件")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            // Templates List
+            if templateFiles.isEmpty {
+                VStack(spacing: 14) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 42))
+                        .foregroundColor(.secondary.opacity(0.6))
+                    Text("当前目录暂无任何模板文件")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Text("点击上方“在访达中打开模板目录”，将常用模板文件拖入即可在访达右键中呼出。")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary.opacity(0.8))
+                    Button("创建默认纯文本模板") {
+                        let txtURL = templatesDir.appendingPathComponent("纯文本.txt")
+                        try? "".write(to: txtURL, atomically: true, encoding: .utf8)
+                        reloadTemplates()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, minHeight: 280)
+                .premiumCardStyle()
+            } else {
                 ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(manager.customTemplates) { tpl in
-                            let isSelected = (tpl.id == selectedTemplateId)
-                            HStack(spacing: 8) {
-                                Toggle("", isOn: Binding(
-                                    get: { tpl.isEnabled },
-                                    set: { newValue in
-                                        var list = manager.customTemplates
-                                        if let idx = list.firstIndex(where: { $0.id == tpl.id }) {
-                                            list[idx].isEnabled = newValue
-                                            manager.customTemplates = list
+                    LazyVStack(spacing: 10) {
+                        ForEach(templateFiles, id: \.path) { fileURL in
+                            let filename = fileURL.lastPathComponent
+                            let ext = fileURL.pathExtension
+                            let baseName = fileURL.deletingPathExtension().lastPathComponent
+                            let isSelected = (selectedFileURL == fileURL)
+                            
+                            HStack(spacing: 14) {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: fileURL.path))
+                                    .resizable()
+                                    .frame(width: 32, height: 32)
+                                
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 8) {
+                                        Text(baseName.isEmpty ? filename : baseName)
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+                                        
+                                        if !ext.isEmpty {
+                                            Text(".\(ext)")
+                                                .font(.system(.caption, design: .monospaced))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.blue.opacity(0.12))
+                                                .foregroundColor(.blue)
+                                                .cornerRadius(5)
                                         }
                                     }
-                                ))
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .scaleEffect(0.7)
-                                .frame(width: 36)
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(tpl.title.isEmpty ? "未命名模板" : tpl.title)
-                                        .font(.subheadline)
-                                        .fontWeight(isSelected ? .semibold : .regular)
-                                        .lineLimit(1)
                                     
-                                    Text(".\(tpl.extensionName)")
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1)
-                                        .background(Color.blue.opacity(0.12))
-                                        .foregroundColor(.blue)
-                                        .cornerRadius(4)
+                                    HStack(spacing: 12) {
+                                        Text(formattedFileSize(for: fileURL))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        
+                                        Text("右键显示：\(menuDisplayTitle(filename: filename, baseName: baseName, ext: ext))")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
                                 
                                 Spacer()
+                                
+                                Button(action: {
+                                    NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                                }) {
+                                    Image(systemName: "arrow.right.circle")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("在访达中显示此文件")
+                                
+                                Button(action: {
+                                    deleteTemplateFile(fileURL)
+                                }) {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundColor(.red.opacity(0.8))
+                                .help("删除此模板文件")
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(isSelected ? Color.accentColor.opacity(0.15) : Color(NSColor.controlBackgroundColor).opacity(0.25))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                selectedTemplateId = tpl.id
+                                selectedFileURL = fileURL
                             }
                         }
                     }
-                    .padding(8)
+                    .padding(2)
                 }
                 .frame(minHeight: 340)
-                
-                Divider()
-                
-                // Toolbar: Add & Delete
-                HStack(spacing: 12) {
-                    Button(action: addNewTemplate) {
-                        Image(systemName: "plus")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("新建模板")
-                    
-                    Button(action: deleteSelectedTemplate) {
-                        Image(systemName: "minus")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(selectedTemplateId == nil || manager.customTemplates.count <= 1)
-                    .help("删除所选模板")
-                    
-                    Spacer()
-                    
-                    Button(action: resetToDefault) {
-                        Image(systemName: "arrow.counterclockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("恢复为默认模板")
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
             }
-            .frame(width: 220)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.35))
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-            
-            // Right detail editor
-            VStack(alignment: .leading, spacing: 14) {
-                if let binding = selectedTemplateBinding {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("模板名称")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                        TextField("例如：Markdown 文档、React 组件", text: binding.title)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("文件扩展名")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text(".")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField("例如：md、tsx、py", text: Binding(
-                                get: { binding.wrappedValue.extensionName },
-                                set: { raw in
-                                    let sanitized = raw.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-                                    binding.wrappedValue.extensionName = sanitized
-                                }
-                            ))
-                            .textFieldStyle(.roundedBorder)
-                        }
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("预填模板内容")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("纯文本 / 源码")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        TextEditor(text: binding.content)
-                            .font(.system(.body, design: .monospaced))
-                            .padding(8)
-                            .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
-                            .cornerRadius(8)
-                            .frame(minHeight: 220)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                            )
-                    }
-                    
-                    HStack {
-                        Spacer()
-                        Text("自动保存所有修改")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        Spacer()
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 40))
-                            .foregroundColor(.secondary)
-                        Text("请在左侧选择一个模板，或点击加号新建")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 380)
-                }
-            }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.2))
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
         }
         .onAppear {
-            if selectedTemplateId == nil, let first = manager.customTemplates.first {
-                selectedTemplateId = first.id
+            CentralStorage.ensureDirectoriesExist()
+            reloadTemplates()
+        }
+        .sheet(isPresented: $showNewFileDialog) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("新建模板文件")
+                    .font(.headline)
+                
+                Text("输入包含扩展名的完整文件名，例如：Component.tsx、index.html、Makefile")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                TextField("文件名.后缀", text: $newFileName)
+                    .textFieldStyle(.roundedBorder)
+                
+                HStack {
+                    Spacer()
+                    Button("取消") {
+                        showNewFileDialog = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    
+                    Button("创建") {
+                        createTemplateFile(named: newFileName)
+                        showNewFileDialog = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(newFileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
+            .padding(24)
+            .frame(width: 420)
         }
     }
     
-    private func addNewTemplate() {
-        let newTpl = CustomFileTemplate(
-            title: "新模板",
-            extensionName: "txt",
-            content: "",
-            isEnabled: true
-        )
-        var list = manager.customTemplates
-        list.append(newTpl)
-        manager.customTemplates = list
-        selectedTemplateId = newTpl.id
-    }
-    
-    private func deleteSelectedTemplate() {
-        guard let id = selectedTemplateId else { return }
-        var list = manager.customTemplates
-        guard list.count > 1 else { return }
-        if let idx = list.firstIndex(where: { $0.id == id }) {
-            list.remove(at: idx)
-            manager.customTemplates = list
-            selectedTemplateId = list.first?.id
+    private func menuDisplayTitle(filename: String, baseName: String, ext: String) -> String {
+        if ext.isEmpty {
+            return filename
+        } else if baseName.isEmpty || baseName.lowercased() == ext.lowercased() {
+            return ext.uppercased()
+        } else {
+            return "\(baseName) (.\(ext))"
         }
     }
     
-    private func resetToDefault() {
-        let defaultTpl = CustomFileTemplate(title: "纯文本", extensionName: "txt", content: "", isEnabled: true)
-        manager.customTemplates = [defaultTpl]
-        selectedTemplateId = defaultTpl.id
+    private func reloadTemplates() {
+        let fm = FileManager.default
+        let items = (try? fm.contentsOfDirectory(at: templatesDir, includingPropertiesForKeys: [.fileSizeKey], options: .skipsHiddenFiles)) ?? []
+        templateFiles = items.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        if selectedFileURL == nil || !templateFiles.contains(where: { $0 == selectedFileURL }) {
+            selectedFileURL = templateFiles.first
+        }
+    }
+    
+    private func openTemplatesDirectoryInFinder() {
+        CentralStorage.ensureDirectoriesExist()
+        NSWorkspace.shared.open(templatesDir)
+    }
+    
+    private func createTemplateFile(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let targetURL = templatesDir.appendingPathComponent(trimmed)
+        if !FileManager.default.fileExists(atPath: targetURL.path) {
+            try? "".write(to: targetURL, atomically: true, encoding: .utf8)
+        }
+        reloadTemplates()
+        selectedFileURL = targetURL
+    }
+    
+    private func deleteTemplateFile(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        reloadTemplates()
+    }
+    
+    private func formattedFileSize(for url: URL) -> String {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+              let size = values.fileSize else {
+            return "0 字节"
+        }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(size))
     }
 }
 

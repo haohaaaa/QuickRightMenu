@@ -209,7 +209,8 @@ export async function installApp(options: InstallOptions = {}): Promise<void> {
   spinner.succeed(`Registered & enabled extension ${pc.dim(`(${extensionId})`)}`);
 
   // 4. Restart Finder to load updated extension
-  spinner.start("Reloading Finder...");
+  spinner.start("Reloading Finder and Extension...");
+  await runCommand("killall", ["-9", "QuickRightMenu Extension"], true);
   await runCommand("killall", ["Finder"], true);
   spinner.succeed("Reloaded Finder workspace");
 

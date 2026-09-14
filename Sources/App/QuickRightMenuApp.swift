@@ -33,12 +33,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private var commandTimer: Timer?
     private var processedCommandPaths = Set<String>()
+    private var templateWatcherSource: DispatchSourceFileSystemObject?
+    private var lastTemplateSyncTime: TimeInterval = 0
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        CentralStorage.ensureDirectoriesExist()
+        CentralStorage.syncTemplatesToContainer()
+        setupTemplateWatcher()
+        log("Application launched, central root: \(CentralStorage.rootURL.path)")
+        
         // 首次打开逻辑与事件绑定
         setupAppleEvents()
         
@@ -59,6 +66,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    private func setupTemplateWatcher() {
+        let path = CentralStorage.templatesDirectoryURL.path
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib, .link, .rename, .delete],
+            queue: DispatchQueue.main
+        )
+        source.setEventHandler {
+            CentralStorage.syncTemplatesToContainer()
+        }
+        source.setCancelHandler {
+            close(fd)
+        }
+        source.resume()
+        self.templateWatcherSource = source
+    }
+    
     private func setupAppleEvents() {
         NSAppleEventManager.shared().setEventHandler(
             self,
@@ -76,25 +103,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func pollCommandFiles() {
         let fileManager = FileManager.default
-        let directory = commandDirectoryURL()
-        guard let files = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) else {
-            return
+        let directories = [
+            CentralStorage.commandsDirectoryURL,
+            CentralStorage.extensionContainerCommandsURL
+        ]
+        
+        for directory in directories {
+            if let files = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
+                for fileURL in files {
+                    guard fileURL.pathExtension == "cmd" else { continue }
+                    let filename = fileURL.lastPathComponent
+                    if processedCommandPaths.contains(filename) {
+                        try? fileManager.removeItem(at: fileURL)
+                        continue
+                    }
+                    
+                    processedCommandPaths.insert(filename)
+                    if let urlString = try? String(contentsOf: fileURL, encoding: .utf8) {
+                        handleCommandURLString(urlString, source: "command file")
+                    }
+                    try? fileManager.removeItem(at: fileURL)
+                }
+            }
         }
         
-        for fileURL in files {
-            guard fileURL.pathExtension == "cmd" else { continue }
-            if processedCommandPaths.contains(fileURL.path) { continue }
-            
-            processedCommandPaths.insert(fileURL.path)
-            if let urlString = try? String(contentsOf: fileURL, encoding: .utf8) {
-                handleCommandURLString(urlString, source: "command file")
-            }
-            try? fileManager.removeItem(at: fileURL)
+        // Ensure templates in container are kept up to date
+        let now = Date().timeIntervalSince1970
+        if now - lastTemplateSyncTime > 2.0 {
+            lastTemplateSyncTime = now
+            CentralStorage.syncTemplatesToContainer()
         }
-    }
-    
-    private func commandDirectoryURL() -> URL {
-        return CentralStorage.commandsDirectoryURL
     }
     
     func log(_ message: String) {
@@ -113,15 +151,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func handleCommandURLString(_ urlString: String, source: String) {
-        log("\(source) \(urlString)")
-        guard let components = URLComponents(string: urlString), components.scheme == "quickrightmenu" else { return }
+        let cleanURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        log("\(source) \(cleanURLString)")
+        guard let components = URLComponents(string: cleanURLString), components.scheme == "quickrightmenu" else { return }
         
         let command = components.host ?? ""
         var params: [String: String] = [:]
         if let queryItems = components.queryItems {
             for item in queryItems {
                 if let val = item.value {
-                    params[item.name] = val
+                    params[item.name] = val.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             }
         }
@@ -131,10 +170,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         switch command {
         case "create":
-            let templateId = params["tid"] ?? ""
+            let templateName = params["template"] ?? params["tid"] ?? ""
             let fallbackExt = params["ext"] ?? "txt"
-            let (extensionName, contents) = templateForIdOrExtension(templateId: templateId, fallbackExt: fallbackExt)
-            createFile(in: directory, baseName: "Untitled", extensionName: extensionName, contents: contents)
+            createFileFromTemplate(in: directory, templateName: templateName, fallbackExt: fallbackExt)
         case "copy-path":
             copyToPasteboard(copyValueForMode("path", paths: pathsString, directory: directory), label: "paths")
         case "copy-name":
@@ -180,32 +218,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    // MARK: - Core Functions Implementation
-    
-    private func templateForIdOrExtension(templateId: String, fallbackExt: String) -> (String, String) {
-        let templates = SettingsManager.shared.customTemplates
-        if !templateId.isEmpty {
-            if let found = templates.first(where: { $0.id == templateId }) {
-                return (found.extensionName, found.content)
+    private func createFileFromTemplate(in directory: URL, templateName: String, fallbackExt: String) {
+        let cleanName = templateName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileManager = FileManager.default
+        let templatesDir = CentralStorage.templatesDirectoryURL
+        let templateFileURL = templatesDir.appendingPathComponent(cleanName)
+        
+        let extensionName: String
+        if !cleanName.isEmpty && templateFileURL.pathExtension.count > 0 {
+            extensionName = templateFileURL.pathExtension
+        } else if !fallbackExt.isEmpty {
+            extensionName = fallbackExt.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            extensionName = "txt"
+        }
+        
+        let destinationURL = uniqueFileURL(in: directory, baseName: "Untitled", extensionName: extensionName)
+        
+        if fileManager.fileExists(atPath: templateFileURL.path) {
+            do {
+                try fileManager.copyItem(at: templateFileURL, to: destinationURL)
+                log("created \(destinationURL.path) from template \(templateFileURL.path)")
+                NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
+                return
+            } catch {
+                log("copy template failed: \(error.localizedDescription)")
             }
         }
-        if let found = templates.first(where: { $0.extensionName.lowercased() == fallbackExt.lowercased() }) {
-            return (found.extensionName, found.content)
-        }
-        return (fallbackExt, "")
-    }
-    
-    private func createFile(in directory: URL, baseName: String, extensionName: String, contents: String) {
-        let fileURL = uniqueFileURL(in: directory, baseName: baseName, extensionName: extensionName)
+        
+        // Fallback for empty creation
         if isOfficeExtension(extensionName) {
-            createOfficeFile(at: fileURL, extensionName: extensionName)
+            createOfficeFile(at: destinationURL, extensionName: extensionName)
             return
         }
         
         do {
-            try contents.write(to: fileURL, atomically: true, encoding: .utf8)
-            log("created \(fileURL.path)")
-            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+            try "".write(to: destinationURL, atomically: true, encoding: .utf8)
+            log("created blank \(destinationURL.path)")
+            NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
         } catch {
             log("create failed \(error.localizedDescription)")
             showError("创建文件失败：\(error.localizedDescription)")
@@ -878,53 +928,112 @@ struct CentralStorage {
         return rootURL.appendingPathComponent("commands", isDirectory: true)
     }
     
+    static var templatesDirectoryURL: URL {
+        return rootURL.appendingPathComponent("file_template", isDirectory: true)
+    }
+    
     static var logFileURL: URL {
         return rootURL.appendingPathComponent("app.log", isDirectory: false)
+    }
+    
+    static var extensionContainerAppSupportURL: URL {
+        return URL(fileURLWithPath: userHomeDirectory)
+            .appendingPathComponent("Library/Containers/com.liaowenbin.QuickRightMenu.Extension/Data/Library/Application Support/QuickRightMenu", isDirectory: true)
+    }
+    
+    static var extensionContainerTemplatesURL: URL {
+        return extensionContainerAppSupportURL.appendingPathComponent("file_template", isDirectory: true)
+    }
+    
+    static var extensionContainerCommandsURL: URL {
+        return extensionContainerAppSupportURL.appendingPathComponent("commands", isDirectory: true)
     }
     
     static func ensureDirectoriesExist() {
         let fm = FileManager.default
         try? fm.createDirectory(at: rootURL, withIntermediateDirectories: true, attributes: nil)
         try? fm.createDirectory(at: commandsDirectoryURL, withIntermediateDirectories: true, attributes: nil)
-    }
-}
-
-// MARK: - Custom File Template Model
-
-struct CustomFileTemplate: Identifiable, Codable, Equatable {
-    var id: String
-    var title: String
-    var extensionName: String
-    var content: String
-    var isEnabled: Bool
-    
-    init(id: String = UUID().uuidString, title: String, extensionName: String, content: String = "", isEnabled: Bool = true) {
-        self.id = id
-        self.title = title
-        self.extensionName = extensionName
-        self.content = content
-        self.isEnabled = isEnabled
-    }
-    
-    var dictionary: [String: Any] {
-        return [
-            "id": id,
-            "title": title,
-            "extensionName": extensionName,
-            "content": content,
-            "isEnabled": isEnabled
-        ]
-    }
-    
-    static func from(dict: [String: Any]) -> CustomFileTemplate? {
-        guard let title = dict["title"] as? String,
-              let ext = dict["extensionName"] as? String else {
-            return nil
+        try? fm.createDirectory(at: templatesDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+        try? fm.createDirectory(at: extensionContainerAppSupportURL, withIntermediateDirectories: true, attributes: nil)
+        try? fm.createDirectory(at: extensionContainerTemplatesURL, withIntermediateDirectories: true, attributes: nil)
+        try? fm.createDirectory(at: extensionContainerCommandsURL, withIntermediateDirectories: true, attributes: nil)
+        
+        let defaultTxtURL = templatesDirectoryURL.appendingPathComponent("纯文本.txt")
+        if !fm.fileExists(atPath: defaultTxtURL.path) {
+            let files = (try? fm.contentsOfDirectory(atPath: templatesDirectoryURL.path)) ?? []
+            if files.filter({ !$0.hasPrefix(".") }).isEmpty {
+                try? "".write(to: defaultTxtURL, atomically: true, encoding: .utf8)
+            }
         }
-        let id = dict["id"] as? String ?? UUID().uuidString
-        let content = dict["content"] as? String ?? ""
-        let isEnabled = dict["isEnabled"] as? Bool ?? true
-        return CustomFileTemplate(id: id, title: title, extensionName: ext, content: content, isEnabled: isEnabled)
+        
+        // Link .quickrightmenu and file_template into extension container
+        let containerDataURL = URL(fileURLWithPath: userHomeDirectory)
+            .appendingPathComponent("Library/Containers/com.liaowenbin.QuickRightMenu.Extension/Data")
+        let linkInContainer = containerDataURL.appendingPathComponent(".quickrightmenu")
+        if fm.fileExists(atPath: containerDataURL.path) && !fm.fileExists(atPath: linkInContainer.path) {
+            try? fm.createSymbolicLink(at: linkInContainer, withDestinationURL: rootURL)
+        }
+        let tplLinkInContainer = containerDataURL.appendingPathComponent("file_template")
+        if fm.fileExists(atPath: containerDataURL.path) && !fm.fileExists(atPath: tplLinkInContainer.path) {
+            try? fm.createSymbolicLink(at: tplLinkInContainer, withDestinationURL: templatesDirectoryURL)
+        }
+        
+        syncTemplatesToContainer()
+    }
+    
+    static func syncTemplatesToContainer() {
+        let fm = FileManager.default
+        let sourceDir = templatesDirectoryURL
+        let targetDir = extensionContainerTemplatesURL
+        
+        try? fm.createDirectory(at: targetDir, withIntermediateDirectories: true, attributes: nil)
+        
+        guard let sourceItems = try? fm.contentsOfDirectory(atPath: sourceDir.path) else { return }
+        let validSources = sourceItems.filter { !$0.hasPrefix(".") }
+        let sourceSet = Set(validSources)
+        
+        let targetItems = (try? fm.contentsOfDirectory(atPath: targetDir.path)) ?? []
+        for targetItem in targetItems {
+            if !targetItem.hasPrefix(".") && !sourceSet.contains(targetItem) {
+                try? fm.removeItem(at: targetDir.appendingPathComponent(targetItem))
+            }
+        }
+        
+        for name in sourceSet {
+            let srcFile = sourceDir.appendingPathComponent(name)
+            let dstFile = targetDir.appendingPathComponent(name)
+            
+            var shouldCopy = true
+            if let srcAttr = try? fm.attributesOfItem(atPath: srcFile.path),
+               let dstAttr = try? fm.attributesOfItem(atPath: dstFile.path),
+               let srcMod = srcAttr[.modificationDate] as? Date,
+               let dstMod = dstAttr[.modificationDate] as? Date,
+               let srcSize = srcAttr[.size] as? NSNumber,
+               let dstSize = dstAttr[.size] as? NSNumber,
+               srcMod == dstMod && srcSize == dstSize {
+                shouldCopy = false
+            }
+            
+            if shouldCopy {
+                try? fm.removeItem(at: dstFile)
+                try? fm.copyItem(at: srcFile, to: dstFile)
+            }
+        }
+    }
+    
+    static func syncToExtensionContainer(configData: Data) {
+        let fm = FileManager.default
+        let containerDir = extensionContainerAppSupportURL
+        try? fm.createDirectory(at: containerDir, withIntermediateDirectories: true, attributes: nil)
+        
+        let targetConfigURL = containerDir.appendingPathComponent("config.json", isDirectory: false)
+        try? configData.write(to: targetConfigURL, options: .atomic)
+    }
+    
+    static func currentTemplateFiles() -> [String] {
+        let fm = FileManager.default
+        let items = (try? fm.contentsOfDirectory(atPath: templatesDirectoryURL.path)) ?? []
+        return items.filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }
 
@@ -941,20 +1050,6 @@ class SettingsManager: ObservableObject {
         saveSettings()
     }
     
-    var customTemplates: [CustomFileTemplate] {
-        get {
-            guard let rawList = settings["customTemplates"] as? [[String: Any]] else {
-                return [CustomFileTemplate(title: "纯文本", extensionName: "txt", content: "", isEnabled: true)]
-            }
-            let parsed = rawList.compactMap { CustomFileTemplate.from(dict: $0) }
-            return parsed.isEmpty ? [CustomFileTemplate(title: "纯文本", extensionName: "txt", content: "", isEnabled: true)] : parsed
-        }
-        set {
-            settings["customTemplates"] = newValue.map { $0.dictionary }
-            saveSettings()
-        }
-    }
-    
     var settingsURL: URL {
         return CentralStorage.configFileURL
     }
@@ -964,10 +1059,6 @@ class SettingsManager: ObservableObject {
         for row in featureRows {
             defaults[row.key] = true
         }
-        let initialTemplates = [
-            CustomFileTemplate(title: "纯文本", extensionName: "txt", content: "", isEnabled: true).dictionary
-        ]
-        defaults["customTemplates"] = initialTemplates
         defaults["terminalPreference"] = "terminal"
         defaults["hasSeenPermissionGuide"] = false
         for i in 1...3 {
@@ -983,7 +1074,7 @@ class SettingsManager: ObservableObject {
         if let data = try? Data(contentsOf: configURL),
            let json = (try? JSONSerialization.jsonObject(with: data, options: [])) as? [String: Any] {
             for (key, val) in json {
-                if merged[key] != nil {
+                if key != "templateFiles" {
                     merged[key] = val
                 }
             }
@@ -997,6 +1088,7 @@ class SettingsManager: ObservableObject {
             return
         }
         try? data.write(to: CentralStorage.configFileURL, options: .atomic)
+        CentralStorage.syncToExtensionContainer(configData: data)
     }
     
     struct FeatureRow: Identifiable {
