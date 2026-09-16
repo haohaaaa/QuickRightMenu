@@ -1,6 +1,6 @@
-import SwiftUI
 import Cocoa
 import QuickRightMenuShared
+import SwiftUI
 
 // MARK: - Premium Color System & UI Modifiers
 
@@ -30,19 +30,23 @@ extension View {
 
 class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
-    
+
     @Published var updateAvailable = false
     @Published var updateCheckFinished = false
     @Published var latestVersion = ""
     @Published var latestDownloadURL = ""
-    
+
     private init() {}
-    
+
     func checkForUpdatesSilently() {
-        guard let url = URL(string: "https://api.github.com/repos/weaiw/QuickRightMenu/releases/latest") else { return }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        guard
+            let url = URL(
+                string: "https://api.github.com/repos/weaiw/QuickRightMenu/releases/latest")
+        else { return }
+        var request = URLRequest(
+            url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
         request.setValue("QuickRightMenu", forHTTPHeaderField: "User-Agent")
-        
+
         URLSession.shared.dataTask(with: request) { data, response, error in
             guard let data = data, error == nil else {
                 DispatchQueue.main.async {
@@ -53,19 +57,21 @@ class UpdateManager: ObservableObject {
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let tag = json["tag_name"] as? String ?? ""
                 let htmlURL = json["html_url"] as? String ?? ""
-                let version = tag.hasPrefix("v") || tag.hasPrefix("V") ? String(tag.dropFirst()) : tag
-                
+                let version =
+                    tag.hasPrefix("v") || tag.hasPrefix("V") ? String(tag.dropFirst()) : tag
+
                 var downloadURL = htmlURL
                 if let assets = json["assets"] as? [[String: Any]] {
                     for asset in assets {
                         if let name = asset["name"] as? String, name.contains("macOS.zip"),
-                           let urlStr = asset["browser_download_url"] as? String {
+                            let urlStr = asset["browser_download_url"] as? String
+                        {
                             downloadURL = urlStr
                             break
                         }
                     }
                 }
-                
+
                 let isNewer = self.isVersion(version, newerThan: "1.5.7")
                 DispatchQueue.main.async {
                     self.latestVersion = version
@@ -76,7 +82,7 @@ class UpdateManager: ObservableObject {
             }
         }.resume()
     }
-    
+
     private func isVersion(_ candidate: String, newerThan current: String) -> Bool {
         let left = candidate.components(separatedBy: ".").compactMap { Int($0) }
         let right = current.components(separatedBy: ".").compactMap { Int($0) }
@@ -95,13 +101,13 @@ class UpdateManager: ObservableObject {
 
 struct SettingsView: View {
     @State private var selection: String = "permissions"
-    
+
     private let primaryGradient = LinearGradient(
         colors: [Color.blue, Color.purple],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-    
+
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
@@ -111,7 +117,7 @@ struct SettingsView: View {
                         Image(systemName: "contextualmenu.and.cursorarrow")
                             .font(.title)
                             .foregroundStyle(primaryGradient)
-                        
+
                         Text("QuickRightMenu")
                             .font(.title3)
                             .bold()
@@ -124,10 +130,10 @@ struct SettingsView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
                 .padding(.bottom, 20)
-                
+
                 Divider()
                     .padding(.horizontal, 16)
-                
+
                 List(selection: $selection) {
                     Section("引导") {
                         NavigationLink(value: "permissions") {
@@ -177,7 +183,7 @@ struct SettingsView: View {
                         Spacer()
                     }
                     .padding(.bottom, 8)
-                    
+
                     // Specific View Content
                     switch selection {
                     case "permissions":
@@ -205,7 +211,9 @@ struct SettingsView: View {
                 Color(NSColor.windowBackgroundColor)
                     .overlay(
                         RadialGradient(
-                            colors: [Color.blue.opacity(0.04), Color.purple.opacity(0.04), Color.clear],
+                            colors: [
+                                Color.blue.opacity(0.04), Color.purple.opacity(0.04), Color.clear,
+                            ],
                             center: .topTrailing,
                             startRadius: 0,
                             endRadius: 500
@@ -214,7 +222,7 @@ struct SettingsView: View {
             )
         }
     }
-    
+
     private func titleForSelection(_ sel: String) -> String {
         switch sel {
         case "permissions": return "权限配置指引"
@@ -227,7 +235,7 @@ struct SettingsView: View {
         default: return "设置"
         }
     }
-    
+
     private func descForSelection(_ sel: String) -> String {
         switch sel {
         case "permissions": return "确保权限完整配置，使得右键菜单加载及后台文件操作畅通无阻。"
@@ -253,7 +261,7 @@ struct PermissionGuideView: View {
                 title: "启动宿主应用授权",
                 desc: "如果是首次运行，系统安全层可能会弹出提示，请至“系统设置 -> 隐私与安全性”底部点击“仍要打开”以完成软件认证。"
             )
-            
+
             stepRow(
                 num: "2",
                 title: "激活访达插件扩展",
@@ -261,10 +269,11 @@ struct PermissionGuideView: View {
                 buttonTitle: "跳转开启扩展设置",
                 buttonIcon: "arrow.up.forward.app.fill",
                 action: {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences")!)
+                    NSWorkspace.shared.open(
+                        URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences")!)
                 }
             )
-            
+
             stepRow(
                 num: "3",
                 title: "授予完全磁盘访问权限",
@@ -272,10 +281,14 @@ struct PermissionGuideView: View {
                 buttonTitle: "跳转完全磁盘访问权限",
                 buttonIcon: "lock.shield.fill",
                 action: {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+                    NSWorkspace.shared.open(
+                        URL(
+                            string:
+                                "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+                        )!)
                 }
             )
-            
+
             stepRow(
                 num: "4",
                 title: "重启 Finder 进程生效",
@@ -291,11 +304,14 @@ struct PermissionGuideView: View {
             )
         }
     }
-    
+
     @State private var isHoveringButton = false
-    
+
     @ViewBuilder
-    private func stepRow(num: String, title: String, desc: String, buttonTitle: String? = nil, buttonIcon: String? = nil, action: (() -> Void)? = nil) -> some View {
+    private func stepRow(
+        num: String, title: String, desc: String, buttonTitle: String? = nil,
+        buttonIcon: String? = nil, action: (() -> Void)? = nil
+    ) -> some View {
         HStack(alignment: .top, spacing: 16) {
             Text(num)
                 .font(.system(.title3, design: .rounded))
@@ -304,20 +320,23 @@ struct PermissionGuideView: View {
                 .frame(width: 32, height: 32)
                 .background(
                     Circle()
-                        .fill(LinearGradient(colors: [Color.blue, Color.indigo], startPoint: .top, endPoint: .bottom))
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.blue, Color.indigo], startPoint: .top,
+                                endPoint: .bottom))
                 )
                 .shadow(color: Color.blue.opacity(0.3), radius: 4, x: 0, y: 2)
-            
+
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.headline)
                     .fontWeight(.semibold)
-                
+
                 Text(desc)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineSpacing(4)
-                
+
                 if let btnTitle = buttonTitle, let act = action {
                     Button(action: act) {
                         HStack {
@@ -341,11 +360,11 @@ struct PermissionGuideView: View {
 // 2. Menu View
 struct MenuView: View {
     @ObservedObject var manager = SettingsManager.shared
-    
+
     private var categories: [String] {
         Array(Set(manager.featureRows.map { $0.category })).sorted()
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack(spacing: 12) {
@@ -358,7 +377,7 @@ struct MenuView: View {
                     Label("全部启用", systemImage: "checkmark.circle.fill")
                 }
                 .buttonStyle(.bordered)
-                
+
                 Button(action: {
                     manager.settings = manager.defaultSettings()
                     manager.saveSettings()
@@ -366,12 +385,13 @@ struct MenuView: View {
                     Label("恢复默认值", systemImage: "arrow.uturn.backward.circle.fill")
                 }
                 .buttonStyle(.bordered)
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     let url = CentralStorage.rootURL
-                    NSWorkspace.shared.selectFile(CentralStorage.configFileURL.path, inFileViewerRootedAtPath: url.path)
+                    NSWorkspace.shared.selectFile(
+                        CentralStorage.configFileURL.path, inFileViewerRootedAtPath: url.path)
                 }) {
                     Label("打开配置目录", systemImage: "folder")
                 }
@@ -379,7 +399,7 @@ struct MenuView: View {
                 .help("在访达中打开 ~/.quickrightmenu/")
             }
             .padding(.bottom, 4)
-            
+
             ForEach(categories, id: \.self) { cat in
                 VStack(alignment: .leading, spacing: 12) {
                     Text(cat)
@@ -387,16 +407,20 @@ struct MenuView: View {
                         .fontWeight(.bold)
                         .foregroundColor(.blue)
                         .padding(.horizontal, 4)
-                    
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 240))], spacing: 12) {
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 180, maximum: 240))], spacing: 12
+                    ) {
                         ForEach(manager.featureRows.filter { $0.category == cat }) { row in
-                            Toggle(isOn: Binding(
-                                get: { manager.settings[row.key] as? Bool ?? true },
-                                set: { val in
-                                    manager.settings[row.key] = val
-                                    manager.saveSettings()
-                                }
-                            )) {
+                            Toggle(
+                                isOn: Binding(
+                                    get: { manager.settings[row.key] as? Bool ?? true },
+                                    set: { val in
+                                        manager.settings[row.key] = val
+                                        manager.saveSettings()
+                                    }
+                                )
+                            ) {
                                 Text(row.title)
                                     .font(.subheadline)
                                     .fontWeight(.medium)
@@ -430,11 +454,11 @@ struct TemplatesView: View {
     @State private var selectedFileURL: URL? = nil
     @State private var showNewFileDialog = false
     @State private var newFileName = ""
-    
+
     private var templatesDir: URL {
         return CentralStorage.templatesDirectoryURL
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             // Header Action Bar
@@ -445,7 +469,7 @@ struct TemplatesView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color.blue)
                 .help("直接使用系统访达或 VS Code 管理物理模板文件")
-                
+
                 Button(action: {
                     newFileName = "新模板.txt"
                     showNewFileDialog = true
@@ -453,19 +477,19 @@ struct TemplatesView: View {
                     Label("新建模板文件", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
-                
+
                 Button(action: reloadTemplates) {
                     Label("刷新列表", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
-                
+
                 Spacer()
-                
+
                 Text("\(templateFiles.count) 个模板文件")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             // Templates List
             if templateFiles.isEmpty {
                 VStack(spacing: 14) {
@@ -496,18 +520,18 @@ struct TemplatesView: View {
                             let ext = fileURL.pathExtension
                             let baseName = fileURL.deletingPathExtension().lastPathComponent
                             let isSelected = (selectedFileURL == fileURL)
-                            
+
                             HStack(spacing: 14) {
                                 Image(nsImage: NSWorkspace.shared.icon(forFile: fileURL.path))
                                     .resizable()
                                     .frame(width: 32, height: 32)
-                                
+
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack(spacing: 8) {
                                         Text(baseName.isEmpty ? filename : baseName)
                                             .font(.headline)
                                             .foregroundColor(.primary)
-                                        
+
                                         if !ext.isEmpty {
                                             Text(".\(ext)")
                                                 .font(.system(.caption, design: .monospaced))
@@ -518,20 +542,22 @@ struct TemplatesView: View {
                                                 .cornerRadius(5)
                                         }
                                     }
-                                    
+
                                     HStack(spacing: 12) {
                                         Text(formattedFileSize(for: fileURL))
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
-                                        
-                                        Text("右键显示：\(menuDisplayTitle(filename: filename, baseName: baseName, ext: ext))")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
+
+                                        Text(
+                                            "右键显示：\(menuDisplayTitle(filename: filename, baseName: baseName, ext: ext))"
+                                        )
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
                                     }
                                 }
-                                
+
                                 Spacer()
-                                
+
                                 Button(action: {
                                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                                 }) {
@@ -539,7 +565,7 @@ struct TemplatesView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .help("在访达中显示此文件")
-                                
+
                                 Button(action: {
                                     deleteTemplateFile(fileURL)
                                 }) {
@@ -553,7 +579,10 @@ struct TemplatesView: View {
                             .padding(.vertical, 10)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(isSelected ? Color.accentColor.opacity(0.15) : Color(NSColor.controlBackgroundColor).opacity(0.25))
+                                    .fill(
+                                        isSelected
+                                            ? Color.accentColor.opacity(0.15)
+                                            : Color(NSColor.controlBackgroundColor).opacity(0.25))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
@@ -578,21 +607,21 @@ struct TemplatesView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("新建模板文件")
                     .font(.headline)
-                
+
                 Text("输入包含扩展名的完整文件名，例如：Component.tsx、index.html、Makefile")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                
+
                 TextField("文件名.后缀", text: $newFileName)
                     .textFieldStyle(.roundedBorder)
-                
+
                 HStack {
                     Spacer()
                     Button("取消") {
                         showNewFileDialog = false
                     }
                     .keyboardShortcut(.cancelAction)
-                    
+
                     Button("创建") {
                         createTemplateFile(named: newFileName)
                         showNewFileDialog = false
@@ -606,7 +635,7 @@ struct TemplatesView: View {
             .frame(width: 420)
         }
     }
-    
+
     private func menuDisplayTitle(filename: String, baseName: String, ext: String) -> String {
         if ext.isEmpty {
             return filename
@@ -616,21 +645,26 @@ struct TemplatesView: View {
             return "\(baseName) (.\(ext))"
         }
     }
-    
+
     private func reloadTemplates() {
         let fm = FileManager.default
-        let items = (try? fm.contentsOfDirectory(at: templatesDir, includingPropertiesForKeys: [.fileSizeKey], options: .skipsHiddenFiles)) ?? []
-        templateFiles = items.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let items =
+            (try? fm.contentsOfDirectory(
+                at: templatesDir, includingPropertiesForKeys: [.fileSizeKey],
+                options: .skipsHiddenFiles)) ?? []
+        templateFiles = items.sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
         if selectedFileURL == nil || !templateFiles.contains(where: { $0 == selectedFileURL }) {
             selectedFileURL = templateFiles.first
         }
     }
-    
+
     private func openTemplatesDirectoryInFinder() {
         CentralStorage.ensureDirectoriesExist()
         NSWorkspace.shared.open(templatesDir)
     }
-    
+
     private func createTemplateFile(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -641,15 +675,16 @@ struct TemplatesView: View {
         reloadTemplates()
         selectedFileURL = targetURL
     }
-    
+
     private func deleteTemplateFile(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
         reloadTemplates()
     }
-    
+
     private func formattedFileSize(for url: URL) -> String {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
-              let size = values.fileSize else {
+            let size = values.fileSize
+        else {
             return "0 字节"
         }
         let formatter = ByteCountFormatter()
@@ -662,7 +697,7 @@ struct TemplatesView: View {
 // 4. Favorites View
 struct FavoritesView: View {
     @ObservedObject var manager = SettingsManager.shared
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             ForEach(1...3, id: \.self) { i in
@@ -670,7 +705,7 @@ struct FavoritesView: View {
                 let pathKey = "favoriteDir\(i)Path"
                 let name = manager.settings[nameKey] as? String ?? ""
                 let path = manager.settings[pathKey] as? String ?? ""
-                
+
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
@@ -681,7 +716,7 @@ struct FavoritesView: View {
                                 .font(.headline)
                                 .fontWeight(.bold)
                         }
-                        
+
                         if !path.isEmpty {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(name)
@@ -699,9 +734,9 @@ struct FavoritesView: View {
                                 .padding(.leading, 28)
                         }
                     }
-                    
+
                     Spacer()
-                    
+
                     Button(action: {
                         chooseFolder(forSlot: i)
                     }) {
@@ -717,7 +752,7 @@ struct FavoritesView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
             }
-            
+
             Button(action: {
                 for i in 1...3 {
                     manager.settings["favoriteDir\(i)Name"] = ""
@@ -732,7 +767,7 @@ struct FavoritesView: View {
             .padding(.top, 4)
         }
     }
-    
+
     private func chooseFolder(forSlot slot: Int) {
         let panel = NSOpenPanel()
         panel.title = "选择常用目标路径"
@@ -740,7 +775,7 @@ struct FavoritesView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        
+
         NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK, let url = panel.url {
             let name = !url.lastPathComponent.isEmpty ? url.lastPathComponent : url.path
@@ -754,8 +789,8 @@ struct FavoritesView: View {
 // 5. Terminal View
 struct TerminalView: View {
     @ObservedObject var manager = SettingsManager.shared
-    @State private var selection = "terminal"
-    
+    @State private var selection = "iterm"
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Picker("默认终端应用: ", selection: $selection) {
@@ -769,7 +804,7 @@ struct TerminalView: View {
                 manager.saveSettings()
             }
             .onAppear {
-                selection = manager.settings["terminalPreference"] as? String ?? "terminal"
+                selection = manager.settings["terminalPreference"] as? String ?? "iterm"
             }
             .padding(8)
         }
@@ -780,14 +815,14 @@ struct TerminalView: View {
 // 6. Login View
 struct LoginView: View {
     @State private var isEnabled = false
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 Image(systemName: isEnabled ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 36))
                     .foregroundColor(isEnabled ? .green : .secondary)
-                
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("系统登录自启动进程")
                         .font(.headline)
@@ -796,18 +831,18 @@ struct LoginView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             Divider()
-            
+
             HStack {
                 Text("开机自启状态:")
                     .bold()
                 Text(isEnabled ? "已启用" : "未开启")
                     .foregroundColor(isEnabled ? .green : .secondary)
                     .fontWeight(.bold)
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     toggleLoginItem()
                 }) {
@@ -822,16 +857,17 @@ struct LoginView: View {
             checkLoginItemStatus()
         }
     }
-    
+
     private var plistURL: URL {
-        let path = (NSHomeDirectory() as NSString).appendingPathComponent("Library/LaunchAgents/com.liaowenbin.QuickRightMenu.plist")
+        let path = (NSHomeDirectory() as NSString).appendingPathComponent(
+            "Library/LaunchAgents/com.liaowenbin.QuickRightMenu.plist")
         return URL(fileURLWithPath: path)
     }
-    
+
     private func checkLoginItemStatus() {
         isEnabled = FileManager.default.fileExists(atPath: plistURL.path)
     }
-    
+
     private func toggleLoginItem() {
         if isEnabled {
             try? FileManager.default.removeItem(at: plistURL)
@@ -841,26 +877,27 @@ struct LoginView: View {
                 .replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;")
                 .replacingOccurrences(of: "\"", with: "&quot;")
-            
+
             let plist = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-              <key>Label</key>
-              <string>com.liaowenbin.QuickRightMenu</string>
-              <key>ProgramArguments</key>
-              <array>
-                <string>/usr/bin/open</string>
-                <string>\(escapedPath)</string>
-              </array>
-              <key>RunAtLoad</key>
-              <true/>
-            </dict>
-            </plist>
-            """
-            
-            try? FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                <plist version="1.0">
+                <dict>
+                  <key>Label</key>
+                  <string>com.liaowenbin.QuickRightMenu</string>
+                  <key>ProgramArguments</key>
+                  <array>
+                    <string>/usr/bin/open</string>
+                    <string>\(escapedPath)</string>
+                  </array>
+                  <key>RunAtLoad</key>
+                  <true/>
+                </dict>
+                </plist>
+                """
+
+            try? FileManager.default.createDirectory(
+                at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? plist.write(to: plistURL, atomically: true, encoding: .utf8)
         }
         checkLoginItemStatus()
@@ -870,14 +907,14 @@ struct LoginView: View {
 // 7. Update View
 struct UpdateView: View {
     @ObservedObject var updateManager = UpdateManager.shared
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 16) {
                 Image(systemName: "info.circle.fill")
                     .font(.system(size: 32))
                     .foregroundColor(.blue)
-                
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("QuickRightMenu")
                         .font(.headline)
@@ -887,9 +924,9 @@ struct UpdateView: View {
                 }
                 Spacer()
             }
-            
+
             Divider()
-            
+
             if updateManager.updateAvailable {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
@@ -924,7 +961,7 @@ struct UpdateView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             HStack(spacing: 12) {
                 Button(action: {
                     updateManager.updateCheckFinished = false
@@ -933,14 +970,19 @@ struct UpdateView: View {
                     Label("手动检查更新", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
-                
+
                 Button(action: {
-                    let urlStr = updateManager.updateAvailable ? updateManager.latestDownloadURL : "https://github.com/weaiw/QuickRightMenu/releases/latest"
+                    let urlStr =
+                        updateManager.updateAvailable
+                        ? updateManager.latestDownloadURL
+                        : "https://github.com/weaiw/QuickRightMenu/releases/latest"
                     if let url = URL(string: urlStr) {
                         NSWorkspace.shared.open(url)
                     }
                 }) {
-                    Label(updateManager.updateAvailable ? "立即下载新版" : "访问 GitHub 主页", systemImage: "safari")
+                    Label(
+                        updateManager.updateAvailable ? "立即下载新版" : "访问 GitHub 主页",
+                        systemImage: "safari")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(updateManager.updateAvailable ? Color.green : Color.blue)
