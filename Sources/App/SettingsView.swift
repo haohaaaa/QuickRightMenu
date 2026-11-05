@@ -789,13 +789,13 @@ struct FavoritesView: View {
 // 5. Terminal View
 struct TerminalView: View {
     @ObservedObject var manager = SettingsManager.shared
-    @State private var selection = "iterm"
+    @State private var selection = "kitty"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Picker("默认终端应用: ", selection: $selection) {
                 Text("系统终端 (Terminal.app)").tag("terminal")
-                Text("iTerm2.app").tag("iterm")
+                Text("kitty.app").tag("kitty")
                 Text("Warp.app").tag("warp")
             }
             .pickerStyle(.radioGroup)
@@ -804,7 +804,7 @@ struct TerminalView: View {
                 manager.saveSettings()
             }
             .onAppear {
-                selection = manager.settings["terminalPreference"] as? String ?? "iterm"
+                selection = manager.settings["terminalPreference"] as? String ?? "kitty"
             }
             .padding(8)
         }

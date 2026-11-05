@@ -214,10 +214,10 @@ class FinderSync: FIFinderSync {
         }
 
         if isFeatureEnabled("terminal") {
-            let pref = settingsDictionary()["terminalPreference"] as? String ?? "iterm"
+            let pref = settingsDictionary()["terminalPreference"] as? String ?? "kitty"
             let terminalTitle: String
             switch pref {
-            case "iterm": terminalTitle = "在 iTerm 中打开"
+            case "kitty": terminalTitle = "在 kitty 中打开"
             case "warp": terminalTitle = "在 Warp 中打开"
             default: terminalTitle = "在终端打开"
             }
@@ -718,7 +718,7 @@ class FinderSync: FIFinderSync {
         if title.contains("父目录") { return "copy-parent" }
         if title.contains("路径") { return "copy-path" }
         if title.contains("新建文件夹") { return "new-folder" }
-        if title.contains("终端") || title.contains("iTerm") || title.contains("Warp") { return "terminal" }
+        if title.contains("终端") || title.contains("kitty") || title.contains("Warp") { return "terminal" }
         if title.contains("VS Code") || title.contains("vscode") { return "vscode" }
 
         return nil

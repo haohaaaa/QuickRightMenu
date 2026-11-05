@@ -920,9 +920,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openTerminal(at directory: URL) {
         let preference =
-            SettingsManager.shared.settings["terminalPreference"] as? String ?? "iterm"
-        var bundleIdentifier = "com.googlecode.iterm2"
-        var displayName = "iTerm2.app"
+            SettingsManager.shared.settings["terminalPreference"] as? String ?? "kitty"
+        var bundleIdentifier = "net.kovidgoyal.kitty"
+        var displayName = "kitty.app"
         if preference == "terminal" {
             bundleIdentifier = "com.apple.Terminal"
             displayName = "Terminal.app"
@@ -930,6 +930,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             bundleIdentifier = "dev.warp.Warp-Stable"
             displayName = "Warp.app"
         }
+        log("open terminal preference=\(preference) bundle=\(bundleIdentifier) directory=\(directory.path)")
 
         guard
             let terminalURL = NSWorkspace.shared.urlForApplication(
@@ -941,13 +942,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.open(
-            [directory], withApplicationAt: terminalURL, configuration: configuration
-        ) { _, error in
+        let completion: (NSRunningApplication?, Error?) -> Void = { application, error in
             if let error = error {
+                self.log("open terminal failed: \(error.localizedDescription)")
                 self.showError("打开终端失败：\(error.localizedDescription)")
+            } else {
+                self.log("opened terminal bundle=\(application?.bundleIdentifier ?? "unknown") pid=\(application?.processIdentifier ?? 0)")
             }
         }
+        // kitty handles directory URLs by opening a window in the existing app instance.
+        NSWorkspace.shared.open(
+            [directory], withApplicationAt: terminalURL, configuration: configuration,
+            completionHandler: completion)
     }
 
     private func openVSCode(paths pathsString: String, directory: URL) {
@@ -1074,7 +1080,7 @@ class SettingsManager: ObservableObject {
         for row in featureRows {
             defaults[row.key] = true
         }
-        defaults["terminalPreference"] = "iterm"
+        defaults["terminalPreference"] = "kitty"
         defaults["hasSeenPermissionGuide"] = false
         for i in 1...3 {
             defaults["favoriteDir\(i)Name"] = ""
